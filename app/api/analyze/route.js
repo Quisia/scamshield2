@@ -3,19 +3,21 @@ export async function POST(req) {
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: "Missing GEMINI_API_KEY" }), { status: 500 });
+    return new Response(
+      JSON.stringify({ error: "Missing GEMINI_API_KEY" }),
+      { status: 500 }
+    );
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
   const prompt = `
 You are a scam detection expert.
 
-Return ONLY valid JSON. No markdown. No explanation. No text outside JSON.
-If your output is not JSON, restart and output JSON only.
+Return ONLY valid JSON. No markdown. No comments. No explaining.
 
-Use this schema EXACTLY:
-
+JSON schema:
 {
   "riskScore": number,
   "riskLabel": "clear_scam" | "likely_scam" | "uncertain" | "likely_legit",
@@ -24,7 +26,7 @@ Use this schema EXACTLY:
   "recommendation": "string"
 }
 
-Analyze the following message and output ONLY the JSON object:
+Analyze this message and output ONLY that JSON:
 
 "${text}"
 `;
@@ -41,16 +43,38 @@ Analyze the following message and output ONLY the JSON object:
     });
 
     const data = await response.json();
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    let json;
+    // Capture all possible Gemini output locations
+    let raw =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      data?.candidates?.[0]?.content?.parts?.[0]?.functionCall?.args ||
+      data?.candidates?.[0]?.content?.parts?.[0]?.functionCall?.arguments;
 
-    try {
-      json = JSON.parse(raw);
-    } catch (err) {
+    if (!raw) {
       return new Response(
         JSON.stringify({
-          error: "Invalid JSON returned by AI",
+          error: "Gemini returned empty content",
+          fullResponse: data
+        }),
+        { status: 500 }
+      );
+    }
+
+    // If it's already an object (functionCall args), leave it
+    if (typeof raw === "object") {
+      return new Response(JSON.stringify(raw), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // Try to parse raw as JSON
+    let json;
+    try {
+      json = JSON.parse(raw);
+    } catch (e) {
+      return new Response(
+        JSON.stringify({
+          error: "Invalid JSON returned by Gemini",
           rawResponse: raw
         }),
         { status: 500 }
@@ -62,9 +86,12 @@ Analyze the following message and output ONLY the JSON object:
     });
 
   } catch (error) {
-    return new Response(JSON.stringify({
-      error: "Failed to contact Gemini",
-      details: error.toString()
-    }), { status: 500 });
+    return new Response(
+      JSON.stringify({
+        error: "Failed to contact Gemini",
+        details: error.toString()
+      }),
+      { status: 500 }
+    );
   }
 }
